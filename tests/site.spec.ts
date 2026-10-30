@@ -1,0 +1,117 @@
+import { test, expect } from '@playwright/test'
+import AxeBuilder from '@axe-core/playwright'
+
+test('booking validates input, retains selection and confirms without sending data', async ({ page }) => {
+  const requests: string[] = []
+  page.on('request', request => { if (request.method() !== 'GET') requests.push(request.url()) })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Записаться: Стрижка + борода, 11 500 ₸' }).click()
+  const dialog = page.getByRole('dialog')
+  await expect(dialog.getByLabel('Услуга', { exact: true })).toHaveValue('combo')
+  await dialog.getByLabel('Тимур', { exact: true }).check()
+  await dialog.getByRole('button', { name: 'Продолжить' }).click()
+  await expect(dialog.getByText('Выберите удобное время.')).toBeVisible()
+  await dialog.getByLabel('13:00', { exact: true }).check()
+  await dialog.getByRole('button', { name: 'Продолжить' }).click()
+  await dialog.getByRole('button', { name: 'Создать демозапись' }).click()
+  await expect(dialog.getByText('Укажите имя: от 2 до 60 символов, без цифр.')).toBeVisible()
+  await expect(dialog.getByLabel('Как к тебе обращаться')).toBeFocused()
+  await dialog.getByLabel('Как к тебе обращаться').fill('Демо Гость')
+  await dialog.getByLabel('Телефон', { exact: false }).fill('+7 (000) 000-00-00')
+  await dialog.getByRole('checkbox').check()
+  await dialog.getByRole('button', { name: 'Изменить выбор' }).click()
+  await expect(dialog.getByLabel('Услуга', { exact: true })).toHaveValue('combo')
+  await expect(dialog.getByLabel('Тимур', { exact: true })).toBeChecked()
+  await expect(dialog.getByLabel('13:00', { exact: true })).toBeChecked()
+  await dialog.getByRole('button', { name: 'Продолжить' }).click()
+  await expect(dialog.getByLabel('Как к тебе обращаться')).toHaveValue('Демо Гость')
+  await dialog.getByRole('button', { name: 'Создать демозапись' }).click()
+  await expect(dialog.getByText('Демо Гость, демозапись готова.')).toBeVisible()
+  await expect(dialog.getByText('Реальная бронь не создана.')).toBeVisible()
+  await expect(dialog.getByRole('heading', { name: 'Отличный выбор.' })).toBeFocused()
+  expect(requests).toEqual([])
+  expect(await page.evaluate(() => ({ local: localStorage.length, session: sessionStorage.length }))).toEqual({ local: 0, session: 0 })
+  await dialog.getByRole('button', { name: 'Вернуться на сайт' }).click()
+  await expect(dialog).toHaveCount(0)
+  await page.getByRole('button', { name: 'Выбрать свой ритуал' }).click()
+  await expect(page.getByLabel('Услуга', { exact: true })).toHaveValue('cut')
+})
+
+test('a selected master carries into the form and Escape restores focus', async ({ page }) => {
+  await page.goto('/')
+  const trigger = page.getByRole('button', { name: 'Выбрать мастера Марк' })
+  await trigger.click()
+  await expect(page.getByRole('dialog').getByLabel('Марк', { exact: true })).toBeChecked()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(trigger).toBeFocused()
+})
+
+test('gallery filters, lightbox keyboard navigation, reviews and FAQ work', async ({ page }) => {
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Процесс', exact: true }).click()
+  await expect(page.locator('.gallery-item')).toHaveCount(2)
+  await page.locator('.gallery-item').first().click()
+  await expect(page.getByRole('dialog')).toBeVisible()
+  const oldTitle = await page.locator('#lightbox-title').textContent()
+  await page.keyboard.press('ArrowRight')
+  await expect(page.locator('#lightbox-title')).not.toHaveText(oldTitle!)
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Всё', exact: true }).click()
+  await expect(page.locator('.gallery-item')).toHaveCount(5)
+  await page.getByRole('button', { name: 'Следующий отзыв' }).click()
+  await expect(page.locator('.review-author')).toContainText('Алексей М.')
+  await page.getByRole('button', { name: 'Предыдущий отзыв' }).click()
+  await expect(page.locator('.review-author')).toContainText('Данияр К.')
+  await page.locator('summary').filter({ hasText: 'Как работает запись на этом сайте?' }).click()
+  await expect(page.getByRole('button', { name: 'Попробовать демозапись', exact: true })).toBeVisible()
+})
+
+test('navigation and mobile menu work', async ({ page, isMobile }) => {
+  await page.goto('/')
+  if (isMobile) {
+    await page.getByRole('button', { name: 'Открыть меню' }).click()
+    await expect(page.getByRole('dialog')).toBeVisible()
+    await page.getByRole('dialog').getByRole('link', { name: /Мастера/ }).click()
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+  } else {
+    await page.getByRole('navigation', { name: 'Основная навигация' }).getByRole('link', { name: 'Мастера' }).click()
+  }
+  await expect(page).toHaveURL(/#masters$/)
+  await expect(page.locator('#masters-title')).toBeInViewport()
+})
+
+test('page and booking have no automated accessibility violations', async ({ page }) => {
+  await page.goto('/')
+  const pageResult = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()
+  expect(pageResult.violations).toEqual([])
+  await page.getByRole('button', { name: 'Выбрать свой ритуал' }).click()
+  await expect(page.getByRole('dialog')).toBeVisible()
+  const dialogResult = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()
+  expect(dialogResult.violations).toEqual([])
+})
+
+test('320px through wide desktop do not overflow horizontally', async ({ page }) => {
+  for (const width of [320, 375, 640, 768, 1024, 1440, 1920]) {
+    await page.setViewportSize({ width, height: 900 })
+    await page.goto('/')
+    await expect(page.locator('#hero-title')).toBeVisible()
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)
+    expect(overflow, `Horizontal overflow at ${width}px`).toBe(false)
+    await page.getByRole('button', { name: 'Выбрать свой ритуал' }).click()
+    const dialog = page.getByRole('dialog')
+    await expect(dialog).toBeVisible()
+    const dialogOverflow = await dialog.evaluate(element => element.scrollWidth > element.clientWidth)
+    expect(dialogOverflow, `Dialog overflow at ${width}px`).toBe(false)
+    await page.keyboard.press('Escape')
+  }
+})
+
+test('images failing to load still preserve usable layout', async ({ page }) => {
+  await page.route('https://images.unsplash.com/**', route => route.abort())
+  await page.goto('/')
+  await expect(page.locator('.hero-photo .photo-fallback')).toBeVisible()
+  await page.getByRole('button', { name: 'Выбрать свой ритуал' }).click()
+  await expect(page.getByRole('dialog')).toBeVisible()
+})
